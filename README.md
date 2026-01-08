@@ -348,3 +348,7 @@ MIT License - Gratis untuk penggunaan komersial dan pribadi
 **© 2024 Route Optimizer - Sistem Optimasi Rute Distribusi dengan Round-Trip Routing**
 
 **Made with ❤️ for efficient delivery operations**
+
+---
+
+**Made with ❤️ by [Digital360](https://digital360.id)**
