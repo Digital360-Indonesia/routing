@@ -19,6 +19,6 @@ jobs:
           port: ${{ secrets.PROD_VPS_PORT || 22 }}
           script_stop: true
           script: |
-            cd /home/syanampro/Projects/routing
+            cd /home/digital360/web/routing.digital360.id/public_html
             chmod +x deploy.sh
             ./deploy.sh
