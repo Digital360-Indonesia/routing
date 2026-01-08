@@ -1,0 +1,14 @@
+# Deployment Configuration Example
+# Copy file ini ke .deployrc dan sesuaikan dengan repo Anda
+
+# Target user untuk PM2 dan file operations
+# User ini harus sudah ada di sistem dan bisa diakses via sudo oleh syanampro
+DEPLOY_USER="your-target-user"
+
+# PM2 app name
+# Setiap repo harus punya nama yang unik
+PM2_APP_NAME="your-app-name"
+
+# Branch yang akan dideploy
+# Biasanya 'main' atau 'master'
+DEPLOY_BRANCH="main"
