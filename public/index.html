@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Route Optimizer - Sistem Optimasi Rute Distribusi</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+            padding: 30px 0;
+            margin-bottom: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .upload-section {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+
+        input[type="file"], input[type="number"], input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e1e1;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="file"]:focus, input[type="number"]:focus, input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .depot-section {
+            background: #f0fff4;
+            border: 2px solid #2ecc71;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .depot-section h3 {
+            color: #2ecc71;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .coord-inputs {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .results {
+            display: none;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+
+        .summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .summary-item {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            border-left: 4px solid #667eea;
+        }
+
+        .summary-item h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .summary-item .value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .day-routes {
+            margin-top: 30px;
+        }
+
+        .day-route {
+            background: #f8f9fa;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .day-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 20px;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .day-content {
+            padding: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .location-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 12px 0;
+            border-bottom: 1px solid #e1e1e1;
+            gap: 10px;
+        }
+
+        .location-item:last-child {
+            border-bottom: none;
+        }
+
+        .map-container {
+            height: 500px;
+            margin-top: 30px;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            cursor: pointer;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #f5c6cb;
+        }
+
+        .success {
+            background: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #c3e6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🗺️ Route Optimizer</h1>
+            <p>Sistem Optimasi Rute untuk Distribusi Brosur</p>
+        </div>
+
+        <div class="upload-section">
+            <h2>Upload File Excel</h2>
+            <p style="margin-bottom: 20px; color: #666;">
+                Upload file Excel (.xlsx) yang berisi kolom <strong>lat</strong> dan <strong>lng</strong> (atau latitude/longitude)
+            </p>
+
+            <form id="uploadForm" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="excelFile">Pilih File Excel:</label>
+                    <input type="file" id="excelFile" name="excelFile" accept=".xlsx,.xls" required>
+                </div>
+
+                <div class="depot-section" style="background: #f0f8ff; padding: 15px; border-radius: 8px; border-left: 4px solid #2ecc71; margin-bottom: 20px;">
+                    <h3 style="color: #2ecc71; margin-bottom: 15px; font-size: 18px;">📍 Lokasi Start & Stop (Depot)</h3>
+                    <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
+                        Tentukan lokasi titik berangkat dan kembali (round-trip). Default: Vido Garment, Sidosermo.
+                    </p>
+                    <div class="coord-inputs">
+                        <div class="form-group">
+                            <label for="depotLat">Latitude:</label>
+                            <input type="text" id="depotLat" name="depotLat" value="-7.308080941479331" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="depotLng">Longitude:</label>
+                            <input type="text" id="depotLng" name="depotLng" value="112.75513514232804" required>
+                        </div>
+                    </div>
+                    <small style="color: #666;">💡 Tip: Klik kanan di Google Maps → "What's here?" untuk mendapatkan koordinat lokasi</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="areaRadius">Radius Pengelompokan Area (km):</label>
+                    <input type="number" id="areaRadius" name="areaRadius" min="1" max="20" step="0.5" value="2" required>
+                    <small style="color: #666;">Lokasi dalam radius ini akan dikelompokkan dalam hari yang sama. Semakin kecil radius, semakin banyak hari yang dibutuhkan. Default: 2 km.</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="minLocationsPerDay">Minimum Lokasi per Hari:</label>
+                    <input type="number" id="minLocationsPerDay" name="minLocationsPerDay" min="3" max="50" step="1" value="10" required>
+                    <small style="color: #666;">Minimum lokasi per hari untuk efisiensi. Grup dengan lokasi kurang dari ini akan digabung dengan grup terdekat. Tidak ada batas maksimal - jika semua lokasi berdekatan dalam radius, akan diambil semua. Default: 10 lokasi/hari.</small>
+                </div>
+
+                <button type="submit" class="btn">Optimasi Rute</button>
+            </form>
+
+            <div style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 10px; border-left: 4px solid #667eea;">
+                <h3 style="color: #667eea; margin-bottom: 15px;">🧠 Konsep Routing & Optimasi</h3>
+
+                <div style="margin-bottom: 15px;">
+                    <strong>📍 Metode Optimasi:</strong>
+                    <p style="color: #555; margin-top: 5px; line-height: 1.6;">
+                        Sistem menggunakan algoritma <strong>Nearest Neighbor + 2-Opt Local Search</strong> untuk mengoptimalkan rute:
+                    </p>
+                    <ul style="color: #555; margin-left: 20px; line-height: 1.8;">
+                        <li><strong>Nearest Neighbor:</strong> Membangun rute dengan selalu mengunjungi lokasi terdekat berikutnya</li>
+                        <li><strong>2-Opt Local Search:</strong> Memperbaiki rute dengan menukar dua edge untuk mengurangi jarak total</li>
+                        <li><strong>Hasil:</strong> Solusi 90-95% optimal dengan kecepatan komputasi yang baik</li>
+                    </ul>
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                    <strong>🗺️ Pengelompokan Area (Clustering):</strong>
+                    <p style="color: #555; margin-top: 5px; line-height: 1.6;">
+                        Lokasi dikelompokkan berdasarkan:
+                    </p>
+                    <ul style="color: #555; margin-left: 20px; line-height: 1.8;">
+                        <li><strong>Radius Area:</strong> Lokasi dalam radius yang ditentukan (default 5km) dikelompokkan dalam 1 hari</li>
+                        <li><strong>Minimum Lokasi/Hari:</strong> Grup dengan lokasi kurang dari minimum akan digabung dengan grup terdekat</li>
+                        <li><strong>Tidak Ada Batas Maksimal:</strong> Jika semua lokasi dalam radius berdekatan, akan diambil semua (lebih efisien)</li>
+                        <li><strong>Smart Merging:</strong> Otomatis menggabung grup kecil dengan grup terdekat</li>
+                    </ul>
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                    <strong>🔄 Round-Trip Routing:</strong>
+                    <p style="color: #555; margin-top: 5px; line-height: 1.6;">
+                        Setiap rute harian menggunakan konsep <strong>Round-Trip</strong> yang efisien:
+                    </p>
+                    <ul style="color: #555; margin-left: 20px; line-height: 1.8;">
+                        <li><strong>Titik Berangkat:</strong> Mulai dari depot (🏠)</li>
+                        <li><strong>Kunjungan:</strong> Mengunjungi semua lokasi dalam grup dengan urutan optimal</li>
+                        <li><strong>Titik Kembali:</strong> Kembali ke depot di akhir hari</li>
+                        <li><strong>Efisien:</strong> Tidak perlu mencari lokasi start berbeda setiap hari</li>
+                    </ul>
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                    <strong>📐 Perhitungan Jarak:</strong>
+                    <p style="color: #555; margin-top: 5px; line-height: 1.6;">
+                        Menggunakan <strong>Haversine Formula</strong> untuk menghitung jarak great-circle (lintasan langsung) antar dua koordinat. Di peta, rute ditampilkan dengan garis putus-putus. Untuk routing jalan raya yang sebenarnya, gunakan tombol <strong>Google Maps</strong>.
+                    </p>
+                </div>
+
+                <div>
+                    <strong>⚡ Keunggulan Sistem:</strong>
+                    <ul style="color: #555; margin-left: 20px; line-height: 1.8;">
+                        <li>✅ <strong>Round-Trip Efficient:</strong> Berangkat & kembali ke depot (logistik)</li>
+                        <li>✅ <strong>Smart Merging:</strong> Grup kecil otomatis digabung dengan grup terdekat</li>
+                        <li>✅ <strong>2-Opt Local Search:</strong> Optimasi lanjutan untuk hasil 90-95% optimal</li>
+                        <li>✅ <strong>Fast Rendering:</strong> Peta langsung muncul tanpa loading lama</li>
+                        <li>✅ <strong>Google Maps Integration:</strong> Export untuk routing jalan raya real-time</li>
+                        <li>✅ <strong>Export Features:</strong> Export ke Excel dan Google Maps</li>
+                    </ul>
+                </div>
+
+                <div style="margin-top: 15px; padding: 15px; background: #e8f5e9; border-radius: 8px; border-left: 4px solid #4caf50;">
+                    <strong>💡 Tips Penggunaan:</strong>
+                    <ul style="color: #555; margin-left: 20px; line-height: 1.8; margin-top: 8px;">
+                        <li><strong>Minimum 8-12 lokasi:</strong> Untuk efisiensi (hindari hari dengan terlalu sedikit lokasi)</li>
+                        <li><strong>Tidak ada batas maksimal:</strong> Sistem akan mengambil semua lokasi yang berdekatan dalam radius</li>
+                        <li><strong>Radius 2 km (default):</strong> Sangat fokus per area, banyak hari, cocok untuk distribusi brosur di kota sangat padat</li>
+                        <li><strong>Radius 3-5 km:</strong> Sedang, untuk area padat seperti Surabaya</li>
+                        <li><strong>Radius 5-8 km:</strong> Lebih sedikit hari, untuk area lebih luas</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="loading" id="loading">
+            <p>⏳ Memproses data dan mengoptimasi rute...</p>
+        </div>
+
+        <div class="results" id="results">
+            <h2>Hasil Optimasi Rute</h2>
+
+            <div class="summary" id="summary"></div>
+
+            <div class="controls">
+                <button class="btn" onclick="exportToExcel()">📊 Export ke Excel</button>
+                <button class="btn" onclick="showAllOnMap()">🗺️ Tampilkan Semua di Peta</button>
+                <button class="btn" onclick="exportAllGoogleMapsLinks()" style="background: #4285f4;">📍 Export All Google Maps</button>
+            </div>
+
+            <div class="map-container">
+                <div id="map"></div>
+            </div>
+
+            <div class="day-routes" id="dayRoutes"></div>
+        </div>
+    </div>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
