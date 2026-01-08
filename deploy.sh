@@ -22,8 +22,8 @@ echo "🌿 Branch: $DEPLOY_BRANCH"
 # Pindah ke directory project
 cd "$SCRIPT_DIR" || exit 1
 
-echo "📥 Pulling latest code from GitHub (as syanampro)..."
-git pull origin "$DEPLOY_BRANCH"
+echo "📥 Pulling latest code from GitHub (as $DEPLOY_USER)..."
+sudo -u "$DEPLOY_USER" git pull origin "$DEPLOY_BRANCH"
 
 echo "📦 Installing dependencies (as $DEPLOY_USER)..."
 sudo -u "$DEPLOY_USER" npm install --production
