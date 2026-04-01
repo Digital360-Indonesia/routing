@@ -276,9 +276,9 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="minLocationsPerDay">Minimum Lokasi per Hari:</label>
-                    <input type="number" id="minLocationsPerDay" name="minLocationsPerDay" min="3" max="50" step="1" value="10" required>
-                    <small style="color: #666;">Minimum lokasi per hari untuk efisiensi. Grup dengan lokasi kurang dari ini akan digabung dengan grup terdekat. Tidak ada batas maksimal - jika semua lokasi berdekatan dalam radius, akan diambil semua. Default: 10 lokasi/hari.</small>
+                    <label for="maxDistancePerDay">Maksimum Jarak per Hari (km):</label>
+                    <input type="number" id="maxDistancePerDay" name="maxDistancePerDay" min="1" max="200" step="0.5" value="15" required>
+                    <small style="color: #666;">Batas jarak tempuh antar lokasi per hari (dari lokasi pertama ke terakhir). Depot tidak dihitung. Default: 15 km/hari.</small>
                 </div>
 
                 <button type="submit" class="btn">Optimasi Rute</button>
@@ -300,15 +300,15 @@
                 </div>
 
                 <div style="margin-bottom: 15px;">
-                    <strong>🗺️ Pengelompokan Area (Clustering):</strong>
+                    <strong>🗺️ Pengelompokan Area (Distance-Based):</strong>
                     <p style="color: #555; margin-top: 5px; line-height: 1.6;">
-                        Lokasi dikelompokkan berdasarkan:
+                        Lokasi dikelompokkan berdasarkan <strong>jarak tempuh</strong>, bukan jumlah lokasi:
                     </p>
                     <ul style="color: #555; margin-left: 20px; line-height: 1.8;">
-                        <li><strong>Radius Area:</strong> Lokasi dalam radius yang ditentukan (default 5km) dikelompokkan dalam 1 hari</li>
-                        <li><strong>Minimum Lokasi/Hari:</strong> Grup dengan lokasi kurang dari minimum akan digabung dengan grup terdekat</li>
-                        <li><strong>Tidak Ada Batas Maksimal:</strong> Jika semua lokasi dalam radius berdekatan, akan diambil semua (lebih efisien)</li>
-                        <li><strong>Smart Merging:</strong> Otomatis menggabung grup kecil dengan grup terdekat</li>
+                        <li><strong>Batas Jarak/Hari:</strong> Setiap hari dibatasi maksimal jarak tempuh antar lokasi (default 15km)</li>
+                        <li><strong>Jarak Dari Lokasi:</strong> Dihitung dari lokasi pertama ke lokasi terakhir, <strong>depot tidak dihitung</strong></li>
+                        <li><strong>Fleksibel:</strong> 1 hari bisa 5 stop atau 20 stop, yang penting jarak tempuh tidak melebihi batas</li>
+                        <li><strong>Konsisten:</strong> Setiap hari memiliki beban kerja yang relatif sama (dalam km)</li>
                     </ul>
                 </div>
 

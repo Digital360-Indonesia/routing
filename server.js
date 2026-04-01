@@ -29,6 +29,60 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
     return R * c;
 }
 
+// Fetch OSRM road distance between two points
+async function getOSRMDistance(lat1, lon1, lat2, lon2) {
+    try {
+        const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${lon1},${lat1};${lon2},${lat2}?overview=false`;
+
+        const response = await fetch(osrmUrl);
+        const data = await response.json();
+
+        if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
+            return data.routes[0].distance / 1000; // Return distance in km
+        }
+
+        // Fallback to straight-line distance if OSRM fails
+        return calculateDistance(lat1, lon1, lat2, lon2);
+    } catch (error) {
+        // Fallback to straight-line distance on error
+        return calculateDistance(lat1, lon1, lat2, lon2);
+    }
+}
+
+// Build OSRM distance matrix for all locations in a group
+async function buildOSRMDistanceMatrix(locations) {
+    const n = locations.length;
+    const matrix = [];
+
+    console.log(`Building OSRM distance matrix for ${n} locations...`);
+
+    for (let i = 0; i < n; i++) {
+        matrix[i] = [];
+        for (let j = 0; j < n; j++) {
+            if (i === j) {
+                matrix[i][j] = 0;
+            } else if (matrix[j] && matrix[j][i] !== undefined) {
+                // Use symmetric property (distance A->B ≈ B->A)
+                matrix[i][j] = matrix[j][i];
+            } else {
+                matrix[i][j] = await getOSRMDistance(
+                    locations[i].lat, locations[i].lng,
+                    locations[j].lat, locations[j].lng
+                );
+                // Small delay to avoid rate limiting
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+        }
+        // Progress indicator
+        if ((i + 1) % 5 === 0 || i === n - 1) {
+            console.log(`  OSRM matrix progress: ${i + 1}/${n} rows`);
+        }
+    }
+
+    console.log(`OSRM distance matrix complete!`);
+    return matrix;
+}
+
 function calculateRouteDistance(locations, route) {
     let totalDistance = 0;
     for (let i = 0; i < route.length - 1; i++) {
@@ -115,48 +169,75 @@ function nearestNeighborTSPLocal(locations) {
     return optimizedRoute;
 }
 
-function groupLocationsByArea(deliveryLocations, maxDistanceKm = 5, depotLat, depotLng, minLocationsPerDay = 5) {
-    // Clustering approach: Group by proximity without hard maximum
-    // Include depot as start and end point for efficient round-trips
+async function groupLocationsByArea(deliveryLocations, maxDistanceKm = 5, depotLat, depotLng, maxDistancePerDay = 15) {
+    // Distance-based clustering: Group locations so travel distance
+    // between locations (from first to last) stays within maxDistancePerDay
+    // Depot is NOT included in distance calculation
     const groups = [];
     const used = new Set();
 
-    // First pass: Create initial clusters based on proximity
-    for (let i = 0; i < deliveryLocations.length; i++) {
-        if (used.has(i)) continue;
+    // Sort all locations by distance from depot (nearest first)
+    const locationsByDepotDistance = deliveryLocations.map((loc, index) => ({
+        index,
+        depotDistance: calculateDistance(depotLat, depotLng, loc.lat, loc.lng)
+    })).sort((a, b) => a.depotDistance - b.depotDistance);
 
-        const group = [i];
-        used.add(i);
-        const baseLocation = deliveryLocations[i];
+    // Build groups using nearest-neighbor within each group,
+    // capped by travel distance between locations
+    for (const entry of locationsByDepotDistance) {
+        if (used.has(entry.index)) continue;
 
-        // Find ALL nearby locations within maxDistanceKm (no hard limit)
-        const nearbyLocations = [];
-        for (let j = 0; j < deliveryLocations.length; j++) {
-            if (used.has(j)) continue;
+        const group = [entry.index];
+        used.add(entry.index);
 
-            const targetLocation = deliveryLocations[j];
-            const distance = calculateDistance(
-                baseLocation.lat, baseLocation.lng,
-                targetLocation.lat, targetLocation.lng
-            );
+        // Track distance between locations only (not including depot)
+        let groupDistanceEstimate = 0;
 
-            if (distance <= maxDistanceKm) {
-                nearbyLocations.push({ index: j, distance: distance });
+        // Keep adding nearest unused locations while distance allows
+        let improved = true;
+        while (improved) {
+            improved = false;
+            let bestCandidate = -1;
+            let bestExtraDistance = Infinity;
+
+            // Find nearest unused location to any location in the group
+            for (let j = 0; j < deliveryLocations.length; j++) {
+                if (used.has(j)) continue;
+
+                // Distance from this candidate to the nearest group member
+                let minDistToGroup = Infinity;
+                for (const groupIdx of group) {
+                    const d = calculateDistance(
+                        deliveryLocations[groupIdx].lat, deliveryLocations[groupIdx].lng,
+                        deliveryLocations[j].lat, deliveryLocations[j].lng
+                    );
+                    if (d < minDistToGroup) minDistToGroup = d;
+                }
+
+                if (minDistToGroup < bestExtraDistance) {
+                    bestExtraDistance = minDistToGroup;
+                    bestCandidate = j;
+                }
+            }
+
+            if (bestCandidate !== -1) {
+                // Distance is just the extra travel between locations
+                const newEstimate = groupDistanceEstimate + bestExtraDistance;
+
+                // Check if adding would exceed max distance per day
+                if (newEstimate <= maxDistancePerDay) {
+                    group.push(bestCandidate);
+                    used.add(bestCandidate);
+                    groupDistanceEstimate = newEstimate;
+                    improved = true;
+                }
             }
         }
-
-        // Sort by distance and add ALL nearby locations
-        nearbyLocations.sort((a, b) => a.distance - b.distance);
-
-        nearbyLocations.forEach(item => {
-            group.push(item.index);
-            used.add(item.index);
-        });
 
         groups.push(group);
     }
 
-    // Second pass: Merge small groups with nearest groups
+    // Second pass: Try to merge small groups if combined distance is still within limit
     let improved = true;
     let iteration = 0;
     const maxIterations = 20;
@@ -168,36 +249,39 @@ function groupLocationsByArea(deliveryLocations, maxDistanceKm = 5, depotLat, de
         // Sort groups: smallest first for priority merging
         groups.sort((a, b) => a.length - b.length);
 
-        // Check each group that's below minimum
         for (let i = 0; i < groups.length; i++) {
-            if (groups[i].length >= minLocationsPerDay) continue;
             if (groups[i].length === 0) continue;
 
-            // Find NEAREST group to merge with (regardless of size)
             let bestMergeIdx = -1;
             let minDistance = Infinity;
 
             for (let j = 0; j < groups.length; j++) {
                 if (i === j || groups[j].length === 0) continue;
 
-                // Calculate average distance between groups
                 const avgDistance = calculateAverageDistance(
                     deliveryLocations, groups[i], groups[j]
                 );
 
-                // Find the closest group, no size limit
                 if (avgDistance < minDistance) {
                     minDistance = avgDistance;
                     bestMergeIdx = j;
                 }
             }
 
-            // Merge with nearest group
             if (bestMergeIdx !== -1) {
-                groups[bestMergeIdx] = [...groups[bestMergeIdx], ...groups[i]];
-                groups[i] = [];
-                improved = true;
-                break;
+                // Estimate combined distance before merging
+                const combinedGroup = [...groups[bestMergeIdx], ...groups[i]];
+                const combinedLocations = combinedGroup.map(idx => deliveryLocations[idx]);
+
+                // Estimate distance between locations only
+                const estimatedDist = estimateRouteDistanceBetweenLocations(combinedLocations);
+
+                if (estimatedDist <= maxDistancePerDay) {
+                    groups[bestMergeIdx] = combinedGroup;
+                    groups[i] = [];
+                    improved = true;
+                    break;
+                }
             }
         }
 
@@ -222,24 +306,35 @@ function groupLocationsByArea(deliveryLocations, maxDistanceKm = 5, depotLat, de
         isDepot: true
     };
 
-    groups.forEach((group, groupIndex) => {
-        if (group.length === 0) return;
+    for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+        const group = groups[groupIndex];
+        if (group.length === 0) continue;
 
         const groupLocations = group.map(index => deliveryLocations[index]);
 
         // Add depot at the beginning for round-trip optimization
         const locationsWithDepot = [depotLocation, ...groupLocations];
 
-        // Optimize route (including depot as start point)
-        const localOptimizedRoute = nearestNeighborTSPRoundTrip(locationsWithDepot);
+        // Optimize route (including depot as start point) using OSRM
+        console.log(`Optimizing route for Day ${groupIndex + 1} with ${locationsWithDepot.length} locations using OSRM...`);
+        const localOptimizedRoute = await nearestNeighborTSPRoundTrip(locationsWithDepot, true);
         const optimizedGroupLocations = localOptimizedRoute.map(localIndex => locationsWithDepot[localIndex]);
 
-        // Calculate total distance (including return to depot)
+        // Calculate total distance (including return to depot for display)
         let totalDistance = 0;
         for (let j = 0; j < optimizedGroupLocations.length - 1; j++) {
             const from = optimizedGroupLocations[j];
             const to = optimizedGroupLocations[j + 1];
             totalDistance += calculateDistance(from.lat, from.lng, to.lat, to.lng);
+        }
+
+        // Calculate travel distance between locations only (for grouping verification)
+        let travelDistance = 0;
+        const deliveryOnlyLocations = optimizedGroupLocations.filter(loc => !loc.isDepot);
+        for (let j = 0; j < deliveryOnlyLocations.length - 1; j++) {
+            const from = deliveryOnlyLocations[j];
+            const to = deliveryOnlyLocations[j + 1];
+            travelDistance += calculateDistance(from.lat, from.lng, to.lat, to.lng);
         }
 
         // Determine area name
@@ -258,61 +353,79 @@ function groupLocationsByArea(deliveryLocations, maxDistanceKm = 5, depotLat, de
             day: groupIndex + 1,
             locations: optimizedGroupLocations,
             totalDistance: totalDistance,
+            travelDistance: travelDistance,
             count: optimizedGroupLocations.length,
             deliveryCount: groupLocations.length,
             area: mainArea,
             subAreas: [...new Set(areas)]
         });
-    });
+    }
 
     return dailyRoutes;
 }
 
-function nearestNeighborTSPLocal(locations) {
-    if (locations.length === 0) return [];
+// Estimate route distance between locations only (not including depot)
+function estimateRouteDistanceBetweenLocations(locations) {
+    if (locations.length <= 1) return 0;
 
     const visited = new Set();
-    const route = [];
-    let currentIndex = 0;
+    let totalDistance = 0;
 
-    // Mulai dari lokasi pertama (bukan depot)
-    route.push(0);
+    // Start from first location
     visited.add(0);
+    let currentLat = locations[0].lat;
+    let currentLng = locations[0].lng;
 
-    while (visited.size < locations.length) {
-        let nearestIndex = -1;
-        let nearestDistance = Infinity;
+    // Nearest-neighbor tour
+    for (let step = 1; step < locations.length; step++) {
+        let nearestIdx = -1;
+        let nearestDist = Infinity;
 
         for (let i = 0; i < locations.length; i++) {
-            if (!visited.has(i)) {
-                const distance = calculateDistance(
-                    locations[currentIndex].lat, locations[currentIndex].lng,
-                    locations[i].lat, locations[i].lng
-                );
-
-                if (distance < nearestDistance) {
-                    nearestDistance = distance;
-                    nearestIndex = i;
-                }
+            if (visited.has(i)) continue;
+            const d = calculateDistance(currentLat, currentLng, locations[i].lat, locations[i].lng);
+            if (d < nearestDist) {
+                nearestDist = d;
+                nearestIdx = i;
             }
         }
 
-        if (nearestIndex !== -1) {
-            route.push(nearestIndex);
-            visited.add(nearestIndex);
-            currentIndex = nearestIndex;
+        if (nearestIdx !== -1) {
+            totalDistance += nearestDist;
+            currentLat = locations[nearestIdx].lat;
+            currentLng = locations[nearestIdx].lng;
+            visited.add(nearestIdx);
         }
     }
 
-    // Optimize dengan 2-opt local search
-    const optimizedRoute = twoOptOptimization(locations, route);
-
-    // Tidak kembali ke depot (one-way trip)
-    return optimizedRoute;
+    // No return to depot - just distance between locations
+    return totalDistance;
 }
 
-function nearestNeighborTSPRoundTrip(locations) {
+async function nearestNeighborTSPRoundTrip(locations, useOSRM = true) {
     if (locations.length === 0) return [];
+
+    // Build distance matrix (OSRM or Haversine fallback)
+    let distanceMatrix;
+    if (useOSRM) {
+        distanceMatrix = await buildOSRMDistanceMatrix(locations);
+    } else {
+        // Fallback to Haversine distances
+        distanceMatrix = [];
+        for (let i = 0; i < locations.length; i++) {
+            distanceMatrix[i] = [];
+            for (let j = 0; j < locations.length; j++) {
+                if (i === j) {
+                    distanceMatrix[i][j] = 0;
+                } else {
+                    distanceMatrix[i][j] = calculateDistance(
+                        locations[i].lat, locations[i].lng,
+                        locations[j].lat, locations[j].lng
+                    );
+                }
+            }
+        }
+    }
 
     const visited = new Set();
     const route = [];
@@ -328,10 +441,8 @@ function nearestNeighborTSPRoundTrip(locations) {
 
         for (let i = 0; i < locations.length; i++) {
             if (!visited.has(i)) {
-                const distance = calculateDistance(
-                    locations[currentIndex].lat, locations[currentIndex].lng,
-                    locations[i].lat, locations[i].lng
-                );
+                // Use distance from matrix
+                const distance = distanceMatrix[currentIndex][i];
 
                 if (distance < nearestDistance) {
                     nearestDistance = distance;
@@ -350,8 +461,8 @@ function nearestNeighborTSPRoundTrip(locations) {
     // Kembali ke depot untuk round-trip
     route.push(0);
 
-    // Optimize dengan 2-opt local search (termasuk return to depot)
-    const optimizedRoute = twoOptOptimizationRoundTrip(locations, route);
+    // Optimize dengan 2-opt local search using distance matrix
+    const optimizedRoute = twoOptOptimizationRoundTripWithMatrix(distanceMatrix, route);
 
     return optimizedRoute;
 }
@@ -392,6 +503,52 @@ function twoOptOptimizationRoundTrip(locations, route) {
     return bestRoute;
 }
 
+// 2-opt optimization using pre-computed distance matrix (for OSRM)
+function twoOptOptimizationRoundTripWithMatrix(distanceMatrix, route) {
+    if (route.length < 4) return route;
+
+    // Calculate route distance using matrix
+    const getRouteDistance = (r) => {
+        let dist = 0;
+        for (let i = 0; i < r.length - 1; i++) {
+            dist += distanceMatrix[r[i]][r[i + 1]];
+        }
+        return dist;
+    };
+
+    let improved = true;
+    let bestRoute = [...route];
+    let bestDistance = getRouteDistance(bestRoute);
+
+    while (improved) {
+        improved = false;
+
+        for (let i = 0; i < route.length - 2; i++) {
+            for (let j = i + 2; j < route.length; j++) {
+                // Skip if it would break the round-trip (depot at start and end)
+                if (i === 0 && j === route.length - 1) continue;
+
+                // Create new route by reversing segment between i and j
+                const newRoute = [
+                    ...bestRoute.slice(0, i + 1),
+                    ...bestRoute.slice(i + 1, j + 1).reverse(),
+                    ...bestRoute.slice(j + 1)
+                ];
+
+                const newDistance = getRouteDistance(newRoute);
+
+                if (newDistance < bestDistance) {
+                    bestRoute = newRoute;
+                    bestDistance = newDistance;
+                    improved = true;
+                }
+            }
+        }
+    }
+
+    return bestRoute;
+}
+
 function calculateAverageDistance(locations, group1, group2) {
     let totalDist = 0;
     let count = 0;
@@ -409,7 +566,7 @@ function calculateAverageDistance(locations, group1, group2) {
     return count > 0 ? totalDist / count : Infinity;
 }
 
-app.post('/upload', upload.single('excelFile'), (req, res) => {
+app.post('/upload', upload.single('excelFile'), async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: 'File tidak ditemukan' });
@@ -491,10 +648,10 @@ app.post('/upload', upload.single('excelFile'), (req, res) => {
         };
 
         const areaRadius = parseFloat(req.body.areaRadius) || 2;
-        const minLocationsPerDay = parseInt(req.body.minLocationsPerDay) || 5;
+        const maxDistancePerDay = parseFloat(req.body.maxDistancePerDay) || 15;
 
-        // Pass parameters to groupLocationsByArea (no more max limit!)
-        const dailyRoutes = groupLocationsByArea(deliveryLocations, areaRadius, depotLat, depotLng, minLocationsPerDay);
+        // Distance-based grouping: each day's route stays within maxDistancePerDay
+        const dailyRoutes = await groupLocationsByArea(deliveryLocations, areaRadius, depotLat, depotLng, maxDistancePerDay);
 
         const totalDistance = dailyRoutes.reduce((sum, day) => sum + day.totalDistance, 0);
         const totalDeliveryLocations = deliveryLocations.length;
@@ -519,7 +676,7 @@ app.post('/upload', upload.single('excelFile'), (req, res) => {
             deliveryLocations: deliveryLocations,
             centerPoint: depotPoint,
             areaRadius: areaRadius,
-            minLocationsPerDay: minLocationsPerDay,
+            maxDistancePerDay: maxDistancePerDay,
             depot: {
                 lat: depotLat,
                 lng: depotLng
@@ -532,6 +689,27 @@ app.post('/upload', upload.single('excelFile'), (req, res) => {
         res.status(500).json({
             error: 'Gagal memproses file: ' + error.message
         });
+    }
+});
+
+// OSRM Proxy endpoint to avoid CORS issues
+app.get('/api/route', async (req, res) => {
+    const { startLng, startLat, endLng, endLat } = req.query;
+
+    if (!startLng || !startLat || !endLng || !endLat) {
+        return res.status(400).json({ error: 'Missing coordinates' });
+    }
+
+    try {
+        const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson`;
+
+        const response = await fetch(osrmUrl);
+        const data = await response.json();
+
+        res.json(data);
+    } catch (error) {
+        console.error('OSRM proxy error:', error);
+        res.status(500).json({ error: 'Failed to fetch route from OSRM' });
     }
 });
 

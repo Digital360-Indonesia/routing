@@ -44,7 +44,7 @@ document.getElementById('uploadForm').addEventListener('submit', async function(
 
     const fileInput = document.getElementById('excelFile');
     const areaRadius = document.getElementById('areaRadius').value;
-    const minLocationsPerDay = document.getElementById('minLocationsPerDay').value;
+    const maxDistancePerDay = document.getElementById('maxDistancePerDay').value;
     const depotLat = document.getElementById('depotLat').value;
     const depotLng = document.getElementById('depotLng').value;
 
@@ -58,8 +58,8 @@ document.getElementById('uploadForm').addEventListener('submit', async function(
         return;
     }
 
-    if (!minLocationsPerDay || minLocationsPerDay < 3) {
-        showError('Silakan isi minimum lokasi per hari (minimal 3)');
+    if (!maxDistancePerDay || maxDistancePerDay < 5) {
+        showError('Silakan isi maksimum jarak per hari (minimal 5 km)');
         return;
     }
 
@@ -79,7 +79,7 @@ document.getElementById('uploadForm').addEventListener('submit', async function(
     const formData = new FormData();
     formData.append('excelFile', fileInput.files[0]);
     formData.append('areaRadius', areaRadius);
-    formData.append('minLocationsPerDay', minLocationsPerDay);
+    formData.append('maxDistancePerDay', maxDistancePerDay);
     formData.append('depotLat', depotLat);
     formData.append('depotLng', depotLng);
 
@@ -163,7 +163,7 @@ function displayResults(data) {
 
     // Show info about routing method
     setTimeout(() => {
-        showSuccess('Rute Round-Trip: Berangkat dari depot → kunjungan lokasi → kembali ke depot. Garis putus-putus = jarak lurus.');
+        showSuccess('Klik "Lihat di Peta" pada setiap hari untuk melihat rute jalan (OSRM). Garis hanya ditampilkan saat melihat rute per hari.');
     }, 1000);
 
     document.getElementById('results').style.display = 'block';
@@ -285,29 +285,132 @@ function clearMap() {
     }
 }
 
+async function getOSRMRoute(startLat, startLng, endLat, endLng) {
+    try {
+        // Use backend proxy to avoid CORS issues
+        const url = `/api/route?startLng=${startLng}&startLat=${startLat}&endLng=${endLng}&endLat=${endLat}`;
+
+        console.log(`🗺️ Fetching OSRM route via backend proxy...`);
+
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Backend proxy error: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
+            // Extract coordinates from GeoJSON (swap lat/lng)
+            const coordinates = data.routes[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
+
+            console.log(`✓ OSRM route found: ${coordinates.length} points, ${(data.routes[0].distance/1000).toFixed(2)}km`);
+
+            return {
+                coordinates: coordinates,
+                distance: data.routes[0].distance / 1000, // Convert to km
+                duration: data.routes[0].duration / 60   // Convert to minutes
+            };
+        }
+
+        throw new Error('No route found in response');
+    } catch (error) {
+        console.warn('✗ OSRM routing failed:', error.message);
+        return null;
+    }
+}
+
 async function drawRoadRoute(locations, color, weight) {
     if (!map || locations.length < 2) return;
 
-    // Direct to straight lines since OSRM API is unreliable
-    // This is faster and more consistent
-    console.log(`Drawing ${locations.length - 1} route segments with straight lines`);
+    // Only draw departure segments (skip return-to-depot), use black color
+    const routeColor = '#000000';
+    const lastDepartureIndex = locations.length - 2; // skip last segment (return to depot)
+    const totalSegments = lastDepartureIndex;
 
-    for (let i = 0; i < locations.length - 1; i++) {
+    console.log(`🗺️ Drawing ${totalSegments} departure segments using OSRM`);
+
+    let osrmSuccessCount = 0;
+    let fallbackCount = 0;
+    let totalOSRMDistance = 0;
+    let totalStraightDistance = 0;
+
+    for (let i = 0; i < totalSegments; i++) {
         const start = locations[i];
         const end = locations[i + 1];
 
-        const straightLine = L.polyline([
-            [start.lat, start.lng],
-            [end.lat, end.lng]
-        ], {
-            color: color,
-            weight: weight,
-            opacity: 0.7,
-            dashArray: '5, 10' // Dashed line to indicate it's straight-line distance
-        }).addTo(map);
+        // Calculate straight-line distance for comparison
+        const straightDist = calculateDistance(start.lat, start.lng, end.lat, end.lng);
 
-        routeLines.push(straightLine);
+        // Try to get OSRM route
+        const route = await getOSRMRoute(start.lat, start.lng, end.lat, end.lng);
+
+        let polyline;
+
+        if (route && route.coordinates.length > 0) {
+            // Use OSRM route (road-based)
+            polyline = L.polyline(route.coordinates, {
+                color: routeColor,
+                weight: weight,
+                opacity: 0.8
+            }).addTo(map);
+
+            osrmSuccessCount++;
+            totalOSRMDistance += route.distance;
+
+            const diff = ((route.distance - straightDist) / straightDist * 100).toFixed(1);
+            console.log(`  Segment ${i + 1}: OSRM ${route.distance.toFixed(2)}km vs Straight ${straightDist.toFixed(2)}km (+${diff}%)`);
+        } else {
+            // Fallback to straight line if OSRM fails
+            polyline = L.polyline([
+                [start.lat, start.lng],
+                [end.lat, end.lng]
+            ], {
+                color: routeColor,
+                weight: weight,
+                opacity: 0.6,
+                dashArray: '5, 10'
+            }).addTo(map);
+
+            fallbackCount++;
+            totalStraightDistance += straightDist;
+            console.warn(`  Segment ${i + 1}: Using straight line (${straightDist.toFixed(2)}km)`);
+        }
+
+        routeLines.push(polyline);
+
+        // Small delay to avoid overwhelming OSRM API (rate limiting)
+        if (i < totalSegments - 1) {
+            await new Promise(resolve => setTimeout(resolve, 150));
+        }
     }
+
+    const totalDistance = totalOSRMDistance + totalStraightDistance;
+    console.log(`✓ Route complete: ${osrmSuccessCount} OSRM, ${fallbackCount} fallbacks, Total: ${totalDistance.toFixed(2)}km`);
+
+    // Update UI with routing method info
+    if (fallbackCount > 0) {
+        showSuccess(`Rute departure: ${osrmSuccessCount} OSRM, ${fallbackCount} fallback`);
+    } else {
+        showSuccess(`Semua rute departure menggunakan jalan sebenarnya via OSRM!`);
+    }
+}
+
+// Helper function to calculate straight-line distance (Haversine formula)
+function calculateDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371; // Earth's radius in kilometers
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
 }
 
 function showAllOnMap() {
@@ -411,15 +514,9 @@ function showAllOnMap() {
             markers.push(marker);
         });
 
-        // Draw route lines for each day following actual roads
-        if (dayRoute.locations.length > 1) {
-            showLoading(true, `Menggambar rute jalan untuk hari ${dayRoute.day}...`);
-            drawRoadRoute(dayRoute.locations, color, 3).then(() => {
-                if (dayIndex === routeData.dailyRoutes.length - 1) {
-                    showLoading(false);
-                }
-            });
-        }
+        // Route lines are NOT drawn by default to avoid OSRM API overload
+        // Users can view detailed routes by clicking "Lihat di Peta" for each day
+        // This will trigger showDayOnMap() which draws OSRM routes
     });
 
     // Fit map to show all markers
